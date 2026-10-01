@@ -192,12 +192,12 @@ let MODEL_YAW=Math.PI/2; // orientation offset for the placeholder model
 const CAMS={tv:{back:12.5,up:5.6,ahead:18,lookUp:0.8},runner:{back:8.5,up:2.9,ahead:11,lookUp:1.6}}; let camMode="tv";
 const SM={h:undefined,heading:undefined,cam:new Cesium.Cartesian3(),look:new Cesium.Cartesian3(),init:false};
 function lerpAngle(a,b,t){ let d=b-a; while(d>Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return a+d*t; }
-const AQ={n:0,t0:0,done:false};
-function adaptQuality(){ if(AQ.done||!tileset||!tileset.tilesLoaded) return; if(!AQ.t0){ AQ.t0=performance.now(); AQ.n=0; return; } AQ.n++; const el=performance.now()-AQ.t0; if(el<4000) return; const fps=AQ.n*1000/el; AQ.done=true;
-  if(fps>=50){ tileset.maximumScreenSpaceError=8; tileset.dynamicScreenSpaceErrorDensity=0.0005; viewer.resolutionScale=Math.min(1,window.devicePixelRatio>1.5?0.9:1.0); }
-  else if(fps>=35){ tileset.maximumScreenSpaceError=12; }
-  else { tileset.maximumScreenSpaceError=24; viewer.resolutionScale=0.6; }
-  AQ.result=Math.round(fps); }
+// rolling quality controller: every 3 s, nudge tile detail and resolution up when there is headroom, down when the frame rate drops
+const AQ={n:0,t0:0,level:1}; const AQ_LEVELS=[{sse:24,res:0.6},{sse:16,res:0.75},{sse:12,res:0.85},{sse:8,res:0.95},{sse:6,res:1.0}];
+function adaptQuality(){ if(!tileset||!viewer) return; if(!AQ.t0){ AQ.t0=performance.now(); AQ.n=0; return; } AQ.n++; const el=performance.now()-AQ.t0; if(el<3000) return; const fps=AQ.n*1000/el; AQ.t0=performance.now(); AQ.n=0; AQ.fps=Math.round(fps);
+  if(!tileset.tilesLoaded) return; // don't judge while streaming
+  if(fps>=54&&AQ.level<AQ_LEVELS.length-1) AQ.level++; else if(fps<32&&AQ.level>0) AQ.level--; else return;
+  const L=AQ_LEVELS[AQ.level]; tileset.maximumScreenSpaceError=L.sse; viewer.resolutionScale=Math.min(L.res,window.devicePixelRatio>1.5?Math.max(0.6,L.res):1.0); }
 function tick(){
   if(window.__frame) window.__frame(); adaptQuality(); const now=performance.now(); const dt=Math.min(0.05,(now-lastT)/1000); lastT=now; if(!G.run) return;
   if(!G.paused){
