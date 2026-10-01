@@ -28,6 +28,15 @@ input,select{width:100%;padding:11px 12px;border:2px solid #0E2A47;border-radius
 #ctl{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));display:flex;gap:8px;justify-content:center}
 #ctl button{background:rgba(8,28,52,.7);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:10px 14px;font-weight:600;font-size:14px}
 .hidden{display:none!important}
+#meters{position:fixed;left:12px;right:12px;bottom:calc(56px + env(safe-area-inset-bottom));display:flex;gap:10px;pointer-events:none}
+.meter{flex:1;background:rgba(8,28,52,.5);border-radius:10px;padding:6px 10px} .meter small{display:block;font-size:11px;font-weight:600;opacity:.85;margin-bottom:4px}
+.bar{height:8px;background:rgba(255,255,255,.18);border-radius:4px;overflow:hidden} .bar i{display:block;height:100%;width:100%;background:#47D7AC;border-radius:4px;transition:width .2s}
+#toast{position:fixed;left:50%;bottom:calc(112px + env(safe-area-inset-bottom));transform:translateX(-50%);background:rgba(8,28,52,.75);color:#47D7AC;font-weight:800;font-size:18px;padding:8px 16px;border-radius:12px;pointer-events:none}
+#toast.bad{color:#FF8A7A}
+#lanes{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));display:flex;justify-content:space-between;pointer-events:none}
+#lanes button{pointer-events:auto;background:rgba(8,28,52,.7);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:12px 16px;font-weight:700;font-size:15px}
+.stat{background:#fff;border:2px solid #0E2A47;border-radius:12px;padding:10px 12px} .stat small{display:block;color:#5A6B80;font-size:12px;font-weight:600} .stat b{font-size:26px;color:#0E2A47}
+#ctl{bottom:calc(14px + env(safe-area-inset-bottom));left:50%;right:auto;transform:translateX(-50%);gap:6px}
 </style>
 </head>
 <body>
@@ -35,8 +44,12 @@ input,select{width:100%;padding:11px 12px;border:2px solid #0E2A47;border-radius
 <div id="hud" class="hidden">
   <div class="pill"><small>Race clock</small><b id="clock">0:00</b></div>
   <div class="pill"><small>Mile</small><b id="mile">0.0</b></div>
-  <div class="pill"><small>Pace</small><b id="pace">0:00</b></div>
+  <div class="pill"><small>vs Pace Bot</small><b id="gap">0:00</b></div>
 </div>
+<div id="meters" class="hidden"><div class="meter"><small>Legs</small><div class="bar"><i id="legs"></i></div></div><div class="meter"><small>Water</small><div class="bar"><i id="water"></i></div></div></div>
+<div id="toast" class="hidden"></div>
+<div id="lanes" class="hidden"><button id="laneL">◀ left</button><button id="laneR">right ▶</button></div>
+<div id="result" class="ov hidden"><div class="sheet"><h1 id="r-title">Mile done</h1><p class="sub" id="r-sub"></p><div class="row"><div class="stat"><small>Mile time</small><b id="r-time">0:00</b></div><div class="stat"><small>Pace Bot</small><b id="r-bot">0:00</b></div></div><div class="row"><div class="stat"><small>Grabbed</small><b id="r-grab">0</b></div><div class="stat"><small>Clipped</small><b id="r-hit">0</b></div></div><button class="btn" id="r-next">Next mile</button><button class="btn alt" id="r-menu">Menu</button></div></div>
 <div id="status" class="hidden">Loading the city…</div>
 <div id="ctl" class="hidden"><button id="slower">Slower</button><button id="pause">Pause</button><button id="faster">Faster</button><button id="menu">Menu</button></div>
 
@@ -64,7 +77,9 @@ const $=id=>document.getElementById(id);
 for(let m=0;m<13;m++){ const o=document.createElement("option"); o.value=m; o.textContent=m===0?"Start line":"Mile "+m; $("startMile").appendChild(o); }
 $("key").value=localStorage.getItem("gnr_google_key")||"";
 
-let viewer,tileset,model,route,cum,total,G={dist:0,speed:4.6,run:false,mode:"sprint",end:0,elapsed:0,paused:false,lastH:40};
+let viewer,tileset,model,bot,route,cum,total,G={dist:0,speed:6.6,run:false,mode:"sprint",end:0,elapsed:0,paused:false,lastH:40,lane:1,laneX:0,legs:100,water:100,grab:0,hit:0,slow:0,boost:0,botDist:0,botSpeed:6.3,sprint:0,finished:false,sprintTaps:0};
+const LANE_X=[-2.6,0,2.6], BASE_SPEED=6.6;
+function toast(t,bad){ const el=$("toast"); el.textContent=t; el.className=bad?"bad":""; el.classList.remove("hidden"); clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.add("hidden"),1300); }
 function fmt(sec){ sec=Math.max(0,Math.round(sec)); const m=Math.floor(sec/60),s=sec%60; return m+":"+String(s).padStart(2,"0"); }
 function buildRoute(){
   route=ROUTE.map(([lon,lat])=>Cesium.Cartesian3.fromDegrees(lon,lat,0)); cum=[0];
@@ -75,7 +90,7 @@ function groundAt(pos){ const h=viewer.scene.clampToHeight(pos,[model],1.0); if(
 async function init(demo){
   const key=$("key").value.trim(); if(!demo&&!key){ $("key").focus(); return; }
   if(key) localStorage.setItem("gnr_google_key",key);
-  $("setup").classList.add("hidden"); $("hud").classList.remove("hidden"); $("status").classList.remove("hidden"); $("ctl").classList.remove("hidden");
+  $("setup").classList.add("hidden"); $("hud").classList.remove("hidden"); $("status").classList.remove("hidden");
   viewer=new Cesium.Viewer("cesiumContainer",{baseLayer:false,contextOptions:{requestWebgl1:false},baseLayerPicker:false,geocoder:false,homeButton:false,sceneModePicker:false,navigationHelpButton:false,animation:false,timeline:false,fullscreenButton:false,infoBox:false,selectionIndicator:false,skyBox:false,terrain:undefined});
   viewer.scene.globe.show=demo; viewer.scene.skyAtmosphere.show=true; viewer.scene.screenSpaceCameraController.enableInputs=false; viewer.scene.msaaSamples=1; viewer.scene.fog.enabled=false; viewer.scene.postProcessStages.fxaa.enabled=true;
   viewer.resolutionScale=Math.min(1,(window.devicePixelRatio>1.5?0.72:0.9)); viewer.scene.requestRenderMode=false;
@@ -88,8 +103,11 @@ async function init(demo){
   buildDressing(demo);
   model=await Cesium.Model.fromGltfAsync({url:TYNEY_GLB,scale:1.1,minimumPixelSize:0}); viewer.scene.primitives.add(model);
   model.readyEvent.addEventListener(()=>{ model.activeAnimations.add({name:"Run",loop:Cesium.ModelAnimationLoop.REPEAT,multiplier:1.0}); });
+  bot=await Cesium.Model.fromGltfAsync({url:TYNEY_GLB,scale:1.1,minimumPixelSize:0,color:Cesium.Color.fromCssColorString("#9AA3AB"),colorBlendMode:Cesium.ColorBlendMode.MIX,colorBlendAmount:0.7}); viewer.scene.primitives.add(bot);
+  bot.readyEvent.addEventListener(()=>{ bot.activeAnimations.add({name:"Run",loop:Cesium.ModelAnimationLoop.REPEAT,multiplier:1.0}); });
   viewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(ROUTE[0][0],ROUTE[0][1],400)});
-  G.mode=$("mode").value; const sm=parseInt($("startMile").value); G.dist=sm*MILE_M; G.end=G.mode==="sprint"?Math.min(total,(sm+1)*MILE_M):total; G.speed=G.mode==="sprint"?6.6:34; G.run=true; G.elapsed=0;
+  G.mode=$("mode").value; const sm=parseInt($("startMile").value); G.dist=sm*MILE_M; G.end=G.mode==="sprint"?Math.min(total,(sm+1)*MILE_M):total; G.speed=G.mode==="sprint"?BASE_SPEED:34; G.run=true; G.elapsed=0; G.botDist=G.dist+5; G.lane=1; G.laneX=0; G.legs=100; G.water=100; G.grab=0; G.hit=0; G.finished=false; G.sprintTaps=0;
+  if(G.mode==="sprint"){ $("meters").classList.remove("hidden"); $("lanes").classList.remove("hidden"); } else { $("ctl").classList.remove("hidden"); }
   $("status").textContent=demo?"Globe only, no tiles":"Streaming the city…";
   viewer.clock.onTick.addEventListener(tick);
 }
@@ -101,6 +119,16 @@ function textImg(lines,w,h,bg,fg,font){ return canvasImage(w,h,(x,W,H)=>{ x.fill
 const VESTS=["#FF4FA3","#FF7A1A","#FFD100","#2ECC71","#2F80ED","#FFFFFF","#8E44AD","#E74C3C","#1ABC9C","#47D7AC","#002F6C","#F1C40F"];
 const SPECTATORS=VESTS.map((v,i)=>canvasImage(64,160,(x)=>{ const skin=["#f1c9a5","#c68642","#8d5524","#e0ac69"][i%4]; x.fillStyle=["#1E2530","#2B3A55","#3C3C3C","#4A3A2E"][i%4]; x.fillRect(18,96,12,60); x.fillRect(34,96,12,60); x.fillStyle=v; x.fillRect(14,48,36,52); if(i%3===0){ x.fillRect(4,30,10,40); x.fillRect(50,30,10,40); } else { x.fillRect(6,52,8,34); x.fillRect(50,52,8,34); } x.fillStyle=skin; x.beginPath(); x.arc(32,30,14,0,Math.PI*2); x.fill(); if(i%3===0){ x.fillRect(4,22,10,12); x.fillRect(50,22,10,12); } }));
 const IMG={start:null,finish:null,miles:{},kms:{}};
+const ITEM_IMG={};
+function makeItemImages(){
+  ITEM_IMG.cup=canvasImage(64,64,x=>{ x.fillStyle="#5BC2E7"; x.beginPath(); x.moveTo(14,10); x.lineTo(50,10); x.lineTo(44,58); x.lineTo(20,58); x.closePath(); x.fill(); x.fillStyle="#fff"; x.fillRect(14,8,36,6); });
+  ITEM_IMG.jelly=canvasImage(64,64,x=>{ x.fillStyle="#FF4FA3"; x.beginPath(); x.ellipse(32,36,16,24,0,0,Math.PI*2); x.fill(); x.beginPath(); x.arc(32,14,12,0,Math.PI*2); x.fill(); x.fillStyle="rgba(255,255,255,.5)"; x.beginPath(); x.arc(27,12,4,0,Math.PI*2); x.fill(); });
+  ITEM_IMG.cone=canvasImage(64,64,x=>{ x.fillStyle="#F26B21"; x.beginPath(); x.moveTo(32,4); x.lineTo(52,58); x.lineTo(12,58); x.closePath(); x.fill(); x.fillStyle="#fff"; x.fillRect(20,32,24,7); x.fillStyle="#222"; x.fillRect(6,56,52,6); });
+  ITEM_IMG.pile=canvasImage(64,48,x=>{ for(let i=0;i<9;i++){ x.fillStyle=i%2?"#5BC2E7":"#9BDDF5"; x.beginPath(); x.ellipse(8+(i*7)%50,28+((i*13)%14),9,5,(i*0.8),0,Math.PI*2); x.fill(); } });
+  ITEM_IMG.boost=canvasImage(96,32,x=>{ x.fillStyle="rgba(71,215,172,.85)"; x.fillRect(0,0,96,32); x.fillStyle="#08302A"; x.font="800 18px system-ui"; x.textAlign="center"; x.fillText("CHEER",48,23); });
+}
+let items, itemSegs=new Map(), ITEMS=[];
+function spawnItems(k){ const d=k*HSTEP; if(d<40||d>total-200) return []; crowdSeed=k*104729+7; const made=[]; const r=crand(); if(r>0.42) return made; const lane=Math.floor(crand()*3); const kind=r<0.16?"cup":(r<0.26?"jelly":(r<0.34?"cone":(r<0.39?"pile":"boost"))); const h=HC.get(k); const pos=offsetAt(d+2,LANE_X[lane],h+(kind==="boost"?0.08:0)); const bb=items.add({position:pos,image:ITEM_IMG[kind],width:kind==="boost"?2.2:0.7,height:kind==="boost"?0.5:(kind==="pile"?0.4:0.7),sizeInMeters:true,verticalOrigin:Cesium.VerticalOrigin.BOTTOM,alignedAxis:kind==="boost"?Cesium.Cartesian3.ZERO:Cesium.Cartesian3.ZERO}); const it={d:d+2,lane,kind,bb,done:false}; ITEMS.push(it); made.push(it); return made; }
 let crowd, signs, crowdSegs=new Map(), windows=new Map();
 const WIN=20; // segments of 5 m per dressing window = 100 m
 function buildDressing(demo){
@@ -108,6 +136,7 @@ function buildDressing(demo){
   for(let m=1;m<=13;m++) IMG.miles[m]=textImg([String(m),"MILE"+(m>1?"S":"")],160,900,"#E4002B","#FFFFFF"); for(let k=5;k<=20;k+=5) IMG.kms[k]=textImg([k+"KM"],160,900,"#1B9AAA","#FFFFFF");
   signs=viewer.scene.primitives.add(new Cesium.BillboardCollection({scene:viewer.scene}));
   crowd=viewer.scene.primitives.add(new Cesium.BillboardCollection({scene:viewer.scene}));
+  makeItemImages(); items=viewer.scene.primitives.add(new Cesium.BillboardCollection({scene:viewer.scene}));
 }
 function hAt(k){ return HC.has(k)?HC.get(k):undefined; }
 function buildWindow(w){ // w: window index; segments w*WIN .. (w+1)*WIN
@@ -137,8 +166,9 @@ let crowdSeed=1; function crand(){ crowdSeed=(crowdSeed*1664525+1013904223)>>>0;
 function updateCrowd(){ if(!crowd) return; const k0=Math.floor(G.dist/HSTEP);
   for(let k=k0-6;k<k0+50;k++){ if(k<0||k*HSTEP>=total||crowdSegs.has(k)||!HC.has(k)) continue; const h=HC.get(k); const d=k*HSTEP; const dens=crowdDensity(d); const made=[]; crowdSeed=k*7919+17;
     for(const side of [-1,1]){ const hs=(side<0?HL:HR).get(k); const hk=hs===undefined?h:hs; const n=crand()<dens?(crand()<dens*0.7?2:1):0; for(let j=0;j<n;j++){ const lat=side*(6.3+crand()*1.6); const pos=offsetAt(d+crand()*HSTEP,lat,hk); const sc=0.92+crand()*0.16; made.push(crowd.add({position:pos,image:SPECTATORS[Math.floor(crand()*SPECTATORS.length)],width:0.62*sc,height:1.75*sc,sizeInMeters:true,verticalOrigin:Cesium.VerticalOrigin.BOTTOM})); } }
-    crowdSegs.set(k,made); }
-  for(const [k,arr] of crowdSegs){ if(k<k0-12){ arr.forEach(b=>crowd.remove(b)); crowdSegs.delete(k); } }
+    crowdSegs.set(k,made); if(G.mode==="sprint"&&!itemSegs.has(k)) itemSegs.set(k,spawnItems(k)); }
+  for(const [k,arr] of crowdSegs){ if(k<k0-12){ arr.forEach(b=>crowd.remove(b)); crowdSegs.delete(k); const its=itemSegs.get(k); if(its){ its.forEach(it=>items.remove(it.bb)); itemSegs.delete(k); } } }
+  ITEMS=ITEMS.filter(it=>it.d>G.dist-60);
   updateDressing();
 }
 // height cache: one sample every 5 m along the course, filled asynchronously from the 3D tiles
@@ -161,7 +191,22 @@ const SM={h:undefined,heading:undefined,cam:new Cesium.Cartesian3(),look:new Ces
 function lerpAngle(a,b,t){ let d=b-a; while(d>Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return a+d*t; }
 function tick(){
   if(window.__frame) window.__frame(); const now=performance.now(); const dt=Math.min(0.05,(now-lastT)/1000); lastT=now; if(!G.run) return;
-  if(!G.paused){ G.dist+=G.speed*dt; G.elapsed+=dt; if(G.dist>=G.end){ G.paused=true; $("status").classList.remove("hidden"); $("status").textContent=G.mode==="sprint"?"Mile done. Menu to run another.":"Finish line. Newcastle to the sea."; } }
+  if(!G.paused){
+    if(G.mode==="sprint"){
+      // legs and water drain; grabbing keeps them up; low meters cost pace; cheer strips and sprint taps add it
+      G.legs=Math.max(0,G.legs-1.1*dt); G.water=Math.max(0,G.water-1.4*dt); G.slow=Math.max(0,G.slow-dt); G.boost=Math.max(0,G.boost-dt); G.sprint=Math.max(0,G.sprint-dt);
+      const cond=0.78+0.11*(G.legs/100)+0.11*(G.water/100); G.speed=BASE_SPEED*cond*(G.slow>0?0.6:1)*(G.boost>0?1.22:1)*(G.sprint>0?1.3:1);
+      // pickups and obstacles in your lane
+      for(const it of ITEMS){ if(it.done||Math.abs(it.d-G.dist)>1.4||it.lane!==G.lane) continue; it.done=true; items.remove(it.bb);
+        if(it.kind==="cup"){ G.water=Math.min(100,G.water+28); G.grab++; toast("Water +28"); } else if(it.kind==="jelly"){ G.legs=Math.min(100,G.legs+22); G.grab++; toast("Jelly baby +22"); } else if(it.kind==="boost"){ G.boost=2.2; toast("Cheer boost!"); } else { G.slow=1.4; G.hit++; toast(it.kind==="cone"?"Clipped a cone":"Slipped on cups",true); } }
+      // the bot runs an even pace
+      G.botDist+=G.botSpeed*dt;
+    }
+    G.dist+=G.speed*dt; G.elapsed+=dt;
+    if(G.dist>=G.end&&!G.finished){ G.finished=true; G.paused=true; if(G.mode==="sprint") showResult(); else { $("status").classList.remove("hidden"); $("status").textContent="Finish line. Newcastle to the sea."; } }
+  }
+  // lane steering eases across
+  G.laneX+=(LANE_X[G.lane]-G.laneX)*Math.min(1,dt*7);
   // route position at the last known ground height, so the camera is valid before we ask the tiles for a height
   // ground height, smoothed over time as well as distance
   const gh0=heightAt(G.dist); if(gh0!==undefined){ SM.h=(SM.h===undefined)?gh0:SM.h+(gh0-SM.h)*Math.min(1,dt*4); G.lastH=SM.h; }
@@ -171,8 +216,8 @@ function tick(){
   const enu=Cesium.Transforms.eastNorthUpToFixedFrame(p0,Cesium.Ellipsoid.WGS84,scratch.enu);
   const inv=Cesium.Matrix4.inverseTransformation(enu,new Cesium.Matrix4()); const fl=Cesium.Matrix4.multiplyByPoint(inv,f,new Cesium.Cartesian3()); const rawHeading=Math.atan2(fl.x,fl.y);
   SM.heading=(SM.heading===undefined)?rawHeading:lerpAngle(SM.heading,rawHeading,Math.min(1,dt*3)); const heading=SM.heading;
-  const back=Cesium.Cartesian3.fromElements(-Math.sin(heading)*8.5,-Math.cos(heading)*8.5,2.9,new Cesium.Cartesian3());
-  const ahead=Cesium.Cartesian3.fromElements(Math.sin(heading)*11,Math.cos(heading)*11,1.6,new Cesium.Cartesian3());
+  const lx=G.laneX*0.45; const back=Cesium.Cartesian3.fromElements(-Math.sin(heading)*8.5+Math.cos(heading)*lx,-Math.cos(heading)*8.5-Math.sin(heading)*lx,2.9,new Cesium.Cartesian3());
+  const ahead=Cesium.Cartesian3.fromElements(Math.sin(heading)*11+Math.cos(heading)*lx,Math.cos(heading)*11-Math.sin(heading)*lx,1.6,new Cesium.Cartesian3());
   const camT=Cesium.Matrix4.multiplyByPoint(enu,back,scratch.cam); const lookT=Cesium.Matrix4.multiplyByPoint(enu,ahead,scratch.look);
   if(!SM.init){ SM.cam.clone&&Cesium.Cartesian3.clone(camT,SM.cam); Cesium.Cartesian3.clone(lookT,SM.look); SM.init=true; }
   const kk=Math.min(1,dt*6); Cesium.Cartesian3.lerp(SM.cam,camT,kk,SM.cam); Cesium.Cartesian3.lerp(SM.look,lookT,kk,SM.look);
@@ -180,14 +225,26 @@ function tick(){
   const dir=Cesium.Cartesian3.normalize(Cesium.Cartesian3.subtract(lookW,camW,new Cesium.Cartesian3()),new Cesium.Cartesian3());
   const up=Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(p0,new Cesium.Cartesian3());
   viewer.camera.setView({destination:camW,orientation:{direction:dir,up}});
-  const p=Cesium.Cartesian3.fromRadians(rc.longitude,rc.latitude,G.lastH);
+  const p=offsetAt(G.dist,G.laneX,G.lastH);
   scheduleSampling(); updateCrowd();
-  const q=Cesium.Transforms.headingPitchRollQuaternion(p,new Cesium.HeadingPitchRoll(heading+MODEL_YAW,0,0));
+  const lean=(LANE_X[G.lane]-G.laneX)*-0.12;
+  const q=Cesium.Transforms.headingPitchRollQuaternion(p,new Cesium.HeadingPitchRoll(heading+MODEL_YAW+lean,0,0));
   model.modelMatrix=Cesium.Matrix4.fromTranslationQuaternionRotationScale(p,q,new Cesium.Cartesian3(1.1,1.1,1.1),model.modelMatrix);
   if(model.ready){ for(const a of model.activeAnimations._runtimeAnimations||[]) a.multiplier=Math.max(0.6,G.speed/5.2); }
-  $("clock").textContent=fmt(G.elapsed); $("mile").textContent=(G.dist/MILE_M).toFixed(2); $("pace").textContent=fmt(MILE_M/Math.max(0.1,G.speed))+"/mi";
+  if(bot&&G.mode==="sprint"){ const bh=heightAt(G.botDist); const bp=offsetAt(G.botDist,-2.6,bh===undefined?G.lastH:bh); const bq=Cesium.Transforms.headingPitchRollQuaternion(bp,new Cesium.HeadingPitchRoll(heading+MODEL_YAW,0,0)); bot.modelMatrix=Cesium.Matrix4.fromTranslationQuaternionRotationScale(bp,bq,new Cesium.Cartesian3(1.1,1.1,1.1),bot.modelMatrix); bot.show=true; } else if(bot){ bot.show=false; }
+  $("clock").textContent=fmt(G.elapsed); $("mile").textContent=(G.dist/MILE_M).toFixed(2);
+  if(G.mode==="sprint"){ const gapS=(G.dist-G.botDist)/Math.max(0.1,G.botSpeed); $("gap").textContent=(gapS>=0?"+":"-")+fmt(Math.abs(gapS)); $("gap").style.color=gapS>=0?"#47D7AC":"#FF8A7A"; $("legs").style.width=G.legs+"%"; $("water").style.width=G.water+"%"; $("legs").style.background=G.legs<30?"#FF8A7A":"#47D7AC"; $("water").style.background=G.water<30?"#FF8A7A":"#5BC2E7"; if(G.end-G.dist<150&&!G.sprintShown){ G.sprintShown=true; toast("TAP! Sprint for the line"); } } else { $("gap").textContent=fmt(MILE_M/Math.max(0.1,G.speed))+"/mi"; }
   if(tileset&&!G.paused){ $("status").textContent=tileset.tilesLoaded?"":"Streaming the city…"; $("status").classList.toggle("hidden",tileset.tilesLoaded); }
 }
+function moveLane(dx){ if(!G.run||G.paused||G.mode!=="sprint") return; G.lane=Math.max(0,Math.min(2,G.lane+dx)); }
+function sprintTap(){ if(!G.run||G.paused||G.mode!=="sprint") return; if(G.end-G.dist<150){ G.sprint=0.5; G.sprintTaps++; } }
+$("laneL").onclick=()=>moveLane(-1); $("laneR").onclick=()=>moveLane(1);
+let tx=0; const cv=document.getElementById("cesiumContainer");
+cv.addEventListener("pointerdown",e=>{ tx=e.clientX; }); cv.addEventListener("pointerup",e=>{ if(!G.run) return; const dx=e.clientX-tx; if(Math.abs(dx)>30) moveLane(dx>0?1:-1); else if(G.end-G.dist<150) sprintTap(); else moveLane(e.clientX<window.innerWidth/2?-1:1); });
+window.addEventListener("keydown",e=>{ if(e.key==="ArrowLeft"||e.key==="a") moveLane(-1); else if(e.key==="ArrowRight"||e.key==="d") moveLane(1); else if(e.key===" "||e.key==="ArrowUp"){ sprintTap(); e.preventDefault(); } });
+function showResult(){ const mileT=G.elapsed; const botT=(G.end-(G.botDist-(G.end-MILE_M)>0?0:0))>0?((G.end-(G.dist-MILE_M))/G.botSpeed):0; const botMile=MILE_M/G.botSpeed; $("r-time").textContent=fmt(mileT); $("r-bot").textContent=fmt(botMile); $("r-grab").textContent=G.grab; $("r-hit").textContent=G.hit; const m=Math.round(G.end/MILE_M); $("r-title").textContent="Mile "+m+" done"; $("r-sub").textContent=(mileT<botMile?"You beat the Pace Bot by "+fmt(botMile-mileT)+".":"Pace Bot had "+fmt(mileT-botMile)+" on you.")+(G.sprintTaps?" "+G.sprintTaps+" sprint taps.":""); $("result").classList.remove("hidden"); $("lanes").classList.add("hidden"); $("meters").classList.add("hidden"); }
+$("r-next").onclick=()=>{ const m=Math.round(G.end/MILE_M); if(m>=13){ location.reload(); return; } $("result").classList.add("hidden"); G.dist=m*MILE_M; G.end=Math.min(total,(m+1)*MILE_M); G.botDist=G.dist+5; G.elapsed=0; G.legs=100; G.water=100; G.grab=0; G.hit=0; G.finished=false; G.paused=false; G.sprintShown=false; G.sprintTaps=0; G.lane=1; SM.init=false; SM.h=undefined; SM.heading=undefined; $("lanes").classList.remove("hidden"); $("meters").classList.remove("hidden"); };
+$("r-menu").onclick=()=>location.reload();
 $("go").onclick=()=>init(false); $("demo").onclick=()=>init(true);
 $("slower").onclick=()=>{ G.speed=Math.max(1.5,G.speed*0.8); }; $("faster").onclick=()=>{ G.speed=Math.min(80,G.speed*1.25); }; $("pause").onclick=()=>{ G.paused=!G.paused; $("pause").textContent=G.paused?"Resume":"Pause"; };
 $("menu").onclick=()=>location.reload();
