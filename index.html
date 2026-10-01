@@ -144,10 +144,17 @@ function updateCrowd(){ if(!crowd) return; const k0=Math.floor(G.dist/HSTEP);
 // height cache: one sample every 5 m along the course, filled asynchronously from the 3D tiles
 const HSTEP=5; const HC=new Map(), HL=new Map(), HR=new Map(); let sampling=false, sampleHead=0;
 function heightAt(d){ const k=Math.round(d/HSTEP); let sum=0,n=0; for(let j=-2;j<=2;j++){ if(HC.has(k+j)){ sum+=HC.get(k+j); n++; } } if(n) return sum/n; for(let j=0;j<12;j++){ if(HC.has(k-j)) return HC.get(k-j); if(HC.has(k+j)) return HC.get(k+j); } return undefined; }
-function scheduleSampling(){ if(sampling||!viewer) return; const k0=Math.floor(G.dist/HSTEP); const keys=[]; for(let k=k0-2;k<k0+110&&keys.length<36;k++){ if(k>=0&&k*HSTEP<total&&!HC.has(k)) keys.push(k); } if(!keys.length) return; sampling=true;
-  const cartos=[]; for(const k of keys){ cartos.push(Cesium.Cartographic.fromCartesian(posAt(k*HSTEP)), Cesium.Cartographic.fromCartesian(offsetAt(k*HSTEP,-7.2)), Cesium.Cartographic.fromCartesian(offsetAt(k*HSTEP,7.2))); }
-  const done=res=>{ keys.forEach((k,i)=>{ const c=res[3*i],l=res[3*i+1],r=res[3*i+2]; const hc=(c&&isFinite(c.height))?c.height:G.lastH; HC.set(k,hc); HL.set(k,(l&&isFinite(l.height)&&Math.abs(l.height-hc)<12)?l.height:hc); HR.set(k,(r&&isFinite(r.height)&&Math.abs(r.height-hc)<12)?r.height:hc); }); sampling=false; };
-  try{ if(tileset){ viewer.scene.sampleHeightMostDetailed(cartos,[model]).then(done,()=>{ sampling=false; }); } else { done(cartos.map(c=>{ c.height=0; return c; })); } }catch(e){ sampling=false; } }
+// Probe downwards from just above the last known road height, so under a bridge we hit the road and not the bridge deck.
+function probeDown(d,lateral,refH){ const top=offsetAt(d,lateral,refH+3.2); const down=Cesium.Cartesian3.negate(Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(top,new Cesium.Cartesian3()),new Cesium.Cartesian3()); return viewer.scene.pickFromRayMostDetailed(new Cesium.Ray(top,down),[model]).then(r=>(r&&r.position)?Cesium.Cartographic.fromCartesian(r.position).height:undefined,()=>undefined); }
+async function scheduleSampling(){ if(sampling||!viewer) return; const k0=Math.floor(G.dist/HSTEP); const keys=[]; for(let k=k0-2;k<k0+110&&keys.length<24;k++){ if(k>=0&&k*HSTEP<total&&!HC.has(k)) keys.push(k); } if(!keys.length) return; sampling=true;
+  try{
+    if(!tileset){ for(const k of keys){ HC.set(k,0); HL.set(k,0); HR.set(k,0); } sampling=false; return; }
+    for(const k of keys){ const d=k*HSTEP; let ref=HC.has(k-1)?HC.get(k-1):(HC.has(k+1)?HC.get(k+1):undefined);
+      if(ref===undefined){ const s0=await viewer.scene.sampleHeightMostDetailed([Cesium.Cartographic.fromCartesian(posAt(d))],[model]); ref=(s0[0]&&isFinite(s0[0].height))?s0[0].height:G.lastH; }
+      const [hc,hl,hr]=await Promise.all([probeDown(d,0,ref),probeDown(d,-7.2,ref),probeDown(d,7.2,ref)]);
+      let h=(hc!==undefined&&Math.abs(hc-ref)<4)?hc:ref; HC.set(k,h);
+      HL.set(k,(hl!==undefined&&Math.abs(hl-h)<12)?hl:h); HR.set(k,(hr!==undefined&&Math.abs(hr-h)<12)?hr:h); }
+  }catch(e){} sampling=false; }
 let lastT=performance.now(); const scratch={p:new Cesium.Cartesian3(),f:new Cesium.Cartesian3(),cam:new Cesium.Cartesian3(),look:new Cesium.Cartesian3(),enu:new Cesium.Matrix4()};
 let MODEL_YAW=Math.PI/2; // orientation offset for the placeholder model
 const SM={h:undefined,heading:undefined,cam:new Cesium.Cartesian3(),look:new Cesium.Cartesian3(),init:false};
