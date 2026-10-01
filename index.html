@@ -44,7 +44,7 @@ input,select{width:100%;padding:11px 12px;border:2px solid #0E2A47;border-radius
 <div id="hud" class="hidden">
   <div class="pill"><small>Race clock</small><b id="clock">0:00</b></div>
   <div class="pill" style="pointer-events:auto;cursor:pointer" id="camBtn"><small>Camera</small><b id="camLbl" style="font-size:18px">TV</b></div>
-  <div class="pill" style="pointer-events:auto;cursor:pointer" id="lookBtn"><small>Look</small><b id="lookLbl" style="font-size:18px">Illustrated</b></div>
+  <div class="pill" style="pointer-events:auto;cursor:pointer" id="lookBtn"><small>Look</small><b id="lookLbl" style="font-size:18px">Photo</b></div>
   <div class="pill"><small>Mile</small><b id="mile">0.0</b></div>
   <div class="pill"><small>vs Pace Bot</small><b id="gap">0:00</b></div>
 </div>
@@ -98,7 +98,7 @@ async function init(demo){
   viewer.resolutionScale=Math.min(1,(window.devicePixelRatio>1.5?0.72:0.9)); viewer.scene.requestRenderMode=false;
   viewer.scene.light=new Cesium.DirectionalLight({direction:new Cesium.Cartesian3(0.4,0.3,-0.86),intensity:1.6});
   buildRoute();
-  if(!demo){ try{ Cesium.GoogleMaps.defaultApiKey=key; tileset=await Cesium.createGooglePhotorealistic3DTileset(key,{}); viewer.scene.primitives.add(tileset); tileset.maximumScreenSpaceError=16; tileset.dynamicScreenSpaceError=true; tileset.dynamicScreenSpaceErrorDensity=0.0009; tileset.dynamicScreenSpaceErrorFactor=8; tileset.skipLevelOfDetail=true; tileset.baseScreenSpaceError=1024; tileset.skipScreenSpaceErrorFactor=16; tileset.skipLevels=1; tileset.immediatelyLoadDesiredLevelOfDetail=false; tileset.loadSiblings=false; tileset.cullRequestsWhileMoving=true; tileset.cullRequestsWhileMovingMultiplier=40; if(location.search.includes("photo")) lookMode="photo"; applyLook(); }catch(e){ $("status").textContent="Tiles failed: "+(e.message||e); } }
+  if(!demo){ try{ Cesium.GoogleMaps.defaultApiKey=key; tileset=await Cesium.createGooglePhotorealistic3DTileset(key,{}); viewer.scene.primitives.add(tileset); tileset.maximumScreenSpaceError=16; tileset.dynamicScreenSpaceError=true; tileset.dynamicScreenSpaceErrorDensity=0.0009; tileset.dynamicScreenSpaceErrorFactor=8; tileset.skipLevelOfDetail=true; tileset.baseScreenSpaceError=1024; tileset.skipScreenSpaceErrorFactor=16; tileset.skipLevels=1; tileset.immediatelyLoadDesiredLevelOfDetail=false; tileset.loadSiblings=false; tileset.cullRequestsWhileMoving=true; tileset.cullRequestsWhileMovingMultiplier=40; if(location.search.includes("illustrated")) lookMode="illustrated"; applyLook(); }catch(e){ $("status").textContent="Tiles failed: "+(e.message||e); } }
   // the course drawn on the ground, and the mile markers
   
   for(let m=1;m<=13;m++){ const p=posAt(m*MILE_M); const c=Cesium.Cartographic.fromCartesian(p); viewer.entities.add({position:Cesium.Cartesian3.fromRadians(c.longitude,c.latitude,3),label:{text:"MILE "+m,font:"800 22px system-ui",fillColor:Cesium.Color.WHITE,outlineColor:Cesium.Color.fromCssColorString("#0E2A47"),outlineWidth:4,style:Cesium.LabelStyle.FILL_AND_OUTLINE,heightReference:(demo||!Cesium.HeightReference.CLAMP_TO_3D_TILE)?Cesium.HeightReference.NONE:Cesium.HeightReference.CLAMP_TO_3D_TILE,verticalOrigin:Cesium.VerticalOrigin.BOTTOM}}); }
@@ -114,7 +114,7 @@ async function init(demo){
   viewer.clock.onTick.addEventListener(tick);
 }
 /* ---- illustrated look: repaint the real city's geometry in flat, clean colour instead of aerial photographs ---- */
-let lookMode="illustrated", ILLUSTRATED=null;
+let lookMode="photo", ILLUSTRATED=null; // the shader repaint experiment is kept behind the Look pill but off by default
 function makeIllustratedShader(){ return new Cesium.CustomShader({ lightingModel:Cesium.LightingModel.UNLIT, fragmentShaderText:`
 void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material){
   vec3 pwc = fsInput.attributes.positionWC;
